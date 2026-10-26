@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TextLens — Working Model</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1c2333;--soft:#4a5268;--paper:#eef1f3;--card:#fff;--line:#dde1e6;--amber:#c98a1f;--amber-bg:#f4e6c8;--teal:#2d6a68;--danger:#b3452f;
+--c1:#c98a1f;--c2:#2d6a68;--c3:#6a4fb3;
+padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#e9ecf1;--soft:#a7afc0;--paper:#161a22;--card:#1f2430;--line:#2b3140;--amber-bg:#3a2f14;}}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,sans-serif;line-height:1.6}
+h1,h2{font-family:'Source Serif 4',serif;margin:0}
+.wrap{max-width:860px;margin:0 auto;padding:30px 20px 60px}
+header p{color:var(--soft);font-size:13px;max-width:560px;margin:6px 0 0}
+h1 span{color:var(--amber)}
+.step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;margin:16px 0}
+.step h2{font-size:16px;display:flex;gap:10px;align-items:center}
+.num{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal);border:1px solid var(--teal);border-radius:99px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mono{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--soft);white-space:pre-wrap;margin-top:8px;line-height:1.7}
+.summary-box{background:var(--amber-bg);border-left:3px solid var(--amber);border-radius:6px;padding:10px 13px;font-size:14px;margin-top:6px}
+.algo-label{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal);margin-top:12px;display:block}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+th,td{border:1px solid var(--line);padding:6px 9px;text-align:left}
+th{font-family:'JetBrains Mono',monospace;font-size:10px}
+textarea{width:100%;font-family:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--paper);min-height:110px;resize:vertical}
+button.primary{background:var(--ink);color:var(--paper);border:none;border-radius:8px;padding:10px 18px;font-weight:600;font-size:13px;cursor:pointer;margin-top:10px}
+.legend{display:flex;gap:16px;font-family:'JetBrains Mono',monospace;font-size:11px;margin-top:6px}
+.legend span{display:flex;align-items:center;gap:5px}
+.dot{width:9px;height:9px;border-radius:2px;display:inline-block}
+footer{margin-top:26px;color:var(--soft);font-size:11px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Text<span>Lens</span> — Working Model</h1>
+  <p>Runs the full extractive-summarization pipeline live in your browser, step by step — the same engine behind the mini project's notebook demo. Nothing leaves your device.</p>
+</header>
+
+<div class="step">
+  <h2><span class="num">1</span>Input text</h2>
+  <textarea id="inputText"></textarea>
+  <button class="primary" id="runBtn">Run the model</button>
+</div>
+
+<div id="out"></div>
+<footer>TextLens · working model · vanilla JS, runs entirely client-side</footer>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const SAMPLE=`Artificial intelligence is transforming industries worldwide. Companies are investing heavily in machine learning research to stay competitive. Many startups now focus exclusively on building AI-powered products. However, concerns about job displacement remain widespread among workers. Experts argue that AI will create new job categories even as it eliminates others. Governments are beginning to draft regulations to ensure AI safety. The European Union has proposed comprehensive AI legislation covering high-risk systems. Meanwhile, the United States has taken a more sector-specific regulatory approach. China continues to invest massively in AI infrastructure and talent. Researchers widely agree that global cooperation is essential to manage AI risks responsibly.`;
+const REFERENCE="AI is transforming industries as companies invest heavily in it. Despite job displacement concerns, governments worldwide are drafting AI regulations, and experts stress the need for global cooperation.";
+$('inputText').value=SAMPLE;
+
+const STOP=new Set("the is are was were a an and or of to in on for with as by at it this that be has have had not but from its will".split(' '));
+function splitSentences(t){t=t.replace(/\s+/g,' ').trim();if(!t)return[];t=t.replace(/।/g,'।|S|');
+  let parts=t.split(/(?<=[.!?])\s+(?=[A-Z0-9"'\u0900-\u097F\u0600-\u06FF])/);let out=[];
+  parts.forEach(c=>c.split('|S|').forEach(p=>{p=p.trim();if(p.length>=3)out.push(p)}));return out;}
+function tokenize(s){return(s.toLowerCase().match(/[a-z0-9\u0900-\u097F]+/g)||[])}
+function detectLang(t){if(/[\u0900-\u097F]/.test(t))return'hi';if(/[\u0600-\u06FF]/.test(t))return'ur';return'en';}
+function tfidfMatrix(sentences){
+  const toks=sentences.map(tokenize);const df={};toks.forEach(ws=>{new Set(ws).forEach(w=>df[w]=(df[w]||0)+1)});
+  const vocab=Object.keys(df);const idx={};vocab.forEach((w,i)=>idx[w]=i);const N=sentences.length;
+  const mat=toks.map(ws=>{const tf={};ws.forEach(w=>tf[w]=(tf[w]||0)+1);const v=new Float64Array(vocab.length);
+    Object.entries(tf).forEach(([w,c])=>{v[idx[w]]=c*Math.log(N/(1+df[w]))+1e-9});
+    const norm=Math.sqrt(v.reduce((a,b)=>a+b*b,0))||1;for(let i=0;i<v.length;i++)v[i]/=norm;return v;});
+  return {mat,vocabSize:vocab.length};
+}
+function cosine(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s}
+function textrank(mat){const n=mat.length;const sim=Array.from({length:n},()=>new Float64Array(n));
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++)if(i!==j)sim[i][j]=Math.max(0,cosine(mat[i],mat[j]));
+  for(let i=0;i<n;i++){const s=sim[i].reduce((a,b)=>a+b,0);if(s>0)for(let j=0;j<n;j++)sim[i][j]/=s;}
+  let scores=new Float64Array(n).fill(1/n);const d=0.85;
+  for(let it=0;it<60;it++){const next=new Float64Array(n).fill((1-d)/n);
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++)next[j]+=d*scores[i]*sim[i][j];scores=next;}
+  return Array.from(scores);}
+function luhnScores(sentences){const toks=sentences.map(tokenize);const freq={};
+  toks.forEach(ws=>ws.forEach(w=>{if(!STOP.has(w))freq[w]=(freq[w]||0)+1}));
+  const words=Object.entries(freq).sort((a,b)=>b[1]-a[1]);
+  const sig=new Set(words.slice(0,Math.max(1,Math.round(words.length*0.3))).map(w=>w[0]));
+  const scores=toks.map(ws=>{const pos=ws.map((w,i)=>sig.has(w)?i:-1).filter(i=>i>=0);if(!pos.length)return 0;
+    let best=0,start=0;for(let i=1;i<pos.length;i++){if(pos[i]-pos[i-1]>4){const span=pos[i-1]-pos[start]+1,cnt=i-start;best=Math.max(best,cnt*cnt/span);start=i;}}
+    const span=pos[pos.length-1]-pos[start]+1,cnt=pos.length-start;best=Math.max(best,cnt*cnt/span);return best;});
+  const mx=Math.max(...scores,1e-9);return scores.map(s=>s/mx);}
+function lsaScores(mat){const n=mat.length,m=mat[0]?.length||0;if(n<2||m===0)return mat.map(()=>1);
+  let v=new Float64Array(m).fill(1/Math.sqrt(m));
+  for(let it=0;it<50;it++){const Av=mat.map(row=>row.reduce((a,x,i)=>a+x*v[i],0));const next=new Float64Array(m);
+    for(let i=0;i<n;i++)for(let j=0;j<m;j++)next[j]+=Av[i]*mat[i][j];
+    const norm=Math.sqrt(next.reduce((a,b)=>a+b*b,0))||1;for(let j=0;j<m;j++)next[j]/=norm;v=next;}
+  const u=mat.map(row=>Math.abs(row.reduce((a,x,i)=>a+x*v[i],0)));const mx=Math.max(...u,1e-9);return u.map(x=>x/mx);}
+function selectSummary(sentences,scores,compression){const n=sentences.length;const nSum=Math.max(1,Math.round(n*compression/100));
+  const ranked=scores.map((s,i)=>[s,i]).sort((a,b)=>b[0]-a[0]);const top=new Set(ranked.slice(0,nSum).map(x=>x[1]));
+  const ordered=[...top].sort((a,b)=>a-b);return {summary:ordered.map(i=>sentences[i]).join(' '),n,nSum:ordered.length};}
+function ngrams(t,n){const o=[];for(let i=0;i<=t.length-n;i++)o.push(t.slice(i,i+n).join(' '));return o}
+function prf(ov,c,r){const p=c?ov/c:0,rec=r?ov/r:0,f=(p+rec)?2*p*rec/(p+rec):0;return{p,r:rec,f}}
+function rougeN(c,r,n){const cg=ngrams(c,n),rg=ngrams(r,n);const rc={};rg.forEach(g=>rc[g]=(rc[g]||0)+1);
+  const cc={};cg.forEach(g=>cc[g]=(cc[g]||0)+1);let ov=0;Object.entries(cc).forEach(([g,c2])=>ov+=Math.min(c2,rc[g]||0));
+  return prf(ov,cg.length,rg.length);}
+function lcs(a,b){const dp=Array.from({length:a.length+1},()=>new Int32Array(b.length+1));
+  for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]+1:Math.max(dp[i-1][j],dp[i][j-1]);
+  return dp[a.length][b.length];}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&lt;','<':'&lt;','>':'&gt;'}[c]==='&lt;'&&c==='&'?'&amp;':({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])))}
+
+function svgChart(sentences,scoreSets){
+  const w=760,h=280,pad=34,n=sentences.length,barW=(w-2*pad)/n/3.6;
+  const colors={textrank:'var(--c1)',luhn:'var(--c2)',lsa:'var(--c3)'};
+  let bars='';
+  Object.entries(scoreSets).forEach(([algo,scores],k)=>{
+    scores.forEach((s,i)=>{
+      const bh=s*(h-2*pad);
+      const x=pad+i*((w-2*pad)/n)+k*barW+4;
+      const y=h-pad-bh;
+      bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${colors[algo]}"/>`;
+    });
+  });
+  let labels='';
+  for(let i=0;i<n;i++){const x=pad+i*((w-2*pad)/n)+((w-2*pad)/n)/2;labels+=`<text x="${x.toFixed(1)}" y="${h-pad+16}" font-size="10" fill="var(--soft)" text-anchor="middle" font-family="JetBrains Mono, monospace">${i}</text>`;}
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto"><line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" stroke="var(--line)"/>${bars}${labels}</svg>`;
+}
+
+function run(){
+  const text=$('inputText').value.trim();
+  const out=$('out');
+  const sentences=splitSentences(text);
+  if(sentences.length<2){out.innerHTML='<div class="step">Paste at least two sentences.</div>';return;}
+  const lang=detectLang(text);
+  const {mat,vocabSize}=tfidfMatrix(sentences);
+
+  let sentList=sentences.map((s,i)=>`[${i}] ${esc(s)}`).join('\n');
+  const scores={textrank:textrank(mat),luhn:luhnScores(sentences),lsa:lsaScores(mat)};
+  let rankingText='';
+  Object.entries(scores).forEach(([algo,sc])=>{
+    const ranked=sc.map((s,i)=>[s,i]).sort((a,b)=>b[0]-a[0]).map(x=>x[1]);
+    rankingText+=`${algo.toUpperCase().padEnd(9)} ranking (best first): [${ranked.join(', ')}]\n`;
+  });
+  let summariesHtml='';
+  Object.entries(scores).forEach(([algo,sc])=>{
+    const r=selectSummary(sentences,sc,30);
+    summariesHtml+=`<span class="algo-label">${algo.toUpperCase()} (${r.nSum}/${r.n} sentences)</span><div class="summary-box">${esc(r.summary)}</div>`;
+  });
+  const trSummary=selectSummary(sentences,scores.textrank,30).summary;
+  const cTok=tokenize(trSummary), rTok=tokenize(REFERENCE);
+  const r1=rougeN(cTok,rTok,1), r2=rougeN(cTok,rTok,2), l=lcs(cTok,rTok), rl=prf(l,cTok.length,rTok.length);
+  const rougeRow=(k,v)=>`<tr><td>${k}</td><td>${v.p.toFixed(3)}</td><td>${v.r.toFixed(3)}</td><td>${v.f.toFixed(3)}</td></tr>`;
+
+  out.innerHTML=`
+    <div class="step"><h2><span class="num">2</span>Preprocessing</h2>
+      <div class="mono">Detected language: ${lang}\nSentence count: ${sentences.length}\n\n${sentList}</div></div>
+    <div class="step"><h2><span class="num">3</span>TF-IDF vectorization</h2>
+      <div class="mono">Matrix shape: ${sentences.length} sentences × ${vocabSize} vocabulary terms</div></div>
+    <div class="step"><h2><span class="num">4</span>Scoring with three algorithms</h2>
+      <div class="mono">${rankingText}</div></div>
+    <div class="step"><h2><span class="num">5</span>Generated summaries (30% compression)</h2>${summariesHtml}</div>
+    <div class="step"><h2><span class="num">6</span>Sentence importance by algorithm</h2>
+      ${svgChart(sentences,scores)}
+      <div class="legend"><span><i class="dot" style="background:var(--c1)"></i>textrank</span><span><i class="dot" style="background:var(--c2)"></i>luhn</span><span><i class="dot" style="background:var(--c3)"></i>lsa</span></div></div>
+    <div class="step"><h2><span class="num">7</span>ROUGE evaluation (TextRank vs. reference)</h2>
+      <div class="mono">Candidate: ${esc(trSummary)}\nReference: ${esc(REFERENCE)}</div>
+      <table><tr><th>metric</th><th>precision</th><th>recall</th><th>f1</th></tr>${rougeRow('ROUGE-1',r1)}${rougeRow('ROUGE-2',r2)}${rougeRow('ROUGE-L',rl)}</table></div>`;
+}
+$('runBtn').addEventListener('click',run);
+run();
+</script>
+</body>
+</html>
